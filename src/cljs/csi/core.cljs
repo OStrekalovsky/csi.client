@@ -35,8 +35,7 @@
                          (if (some? (<! replies))
                            (recur)))
                 return)
-              (recur)))))))
-  )
+              (recur))))))))
 
 (defn erlang-mbox* [socket {:keys [self] :as params}]
   (log/debug (str "creating mbox with params: " params))
@@ -78,7 +77,8 @@
       (call* [_ func params]
         (let [module (namespace func)
               function (name func)]
-          (make-call socket correlation replies-mult [(keyword (or module :erlang)) (keyword function)] (apply list params))
+          (make-call socket correlation replies-mult
+                     [(keyword (or module :erlang)) (keyword function)] (apply list params))
           )
         )
       (send! [_ pid message]
