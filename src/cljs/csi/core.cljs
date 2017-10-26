@@ -16,6 +16,28 @@
   (ext-call* [_ func params info])
   (self [_]))
 
+(defn- make-call [socket correlation replies-mult & msg]
+  (go
+    (let [replies (async/chan) correlation (swap! correlation inc)]
+
+      (async/tap replies-mult replies)
+      (>! socket
+          (etf/encode (reduce conj [:call correlation] msg)))
+      (loop []
+        (when-let [reply (<! replies)]
+          (let [[reply-correlation return] reply]
+            (if (= correlation reply-correlation)           ; TODO: timeout handling
+              (do
+                (async/untap replies-mult replies)
+                ; Protection from deadlocks.
+                ; Look at "https://dev.clojure.org/jira/browse/ASYNC-58" for details.
+                (go-loop []
+                         (if (some? (<! replies))
+                           (recur)))
+                return)
+              (recur)))))))
+  )
+
 (defn erlang-mbox* [socket {:keys [self] :as params}]
   (log/debug (str "creating mbox with params: " params))
 
@@ -47,51 +69,18 @@
         (async/close! socket))
 
       (ext-call* [_ func params info]
-        (go
-          (let [replies (async/chan) correlation (swap! correlation inc)
-                module (namespace func) function (name func)]
-            (assert function "invalid function")
-
-            (async/tap replies-mult replies)
-            (>! socket
-                (etf/encode [:call correlation [[(keyword (or module :erlang)) (keyword function)] (apply list params) info]]))
-
-            (loop []
-              (when-let [reply (<! replies)]
-                (let [[reply-correlation return] reply]
-                  (if (= correlation reply-correlation)     ; TODO: timeout handling
-                    (do
-                      (async/untap replies-mult replies)
-                      ; Protection from deadlocks.
-                      ; Look at "https://dev.clojure.org/jira/browse/ASYNC-58" for details.
-                      (go-loop []
-                               (if (some? (<! replies))
-                                 (recur)))
-                      return)
-                    (recur))))))))
+        (let [module (namespace func)
+              function (name func)]
+          (make-call socket correlation replies-mult
+                     [[(keyword (or module :erlang)) (keyword function)] (apply list params) info])
+          )
+        )
       (call* [_ func params]
-        (go
-          (let [replies (async/chan) correlation (swap! correlation inc)
-                module (namespace func) function (name func)]
-            (assert function "invalid function")
-
-            (async/tap replies-mult replies)
-            (>! socket
-                (etf/encode [:call correlation [(keyword (or module :erlang)) (keyword function)] (apply list params)]))
-
-            (loop []
-              (when-let [reply (<! replies)]
-                (let [[reply-correlation return] reply]
-                  (if (= correlation reply-correlation)     ; TODO: timeout handling
-                    (do
-                      (async/untap replies-mult replies)
-                      ; Protection from deadlocks.
-                      ; Look at "https://dev.clojure.org/jira/browse/ASYNC-58" for details.
-                      (go-loop []
-                               (if (some? (<! replies))
-                                 (recur)))
-                      return)
-                    (recur))))))))
+        (let [module (namespace func)
+              function (name func)]
+          (make-call socket correlation replies-mult [(keyword (or module :erlang)) (keyword function)] (apply list params))
+          )
+        )
       (send! [_ pid message]
         (let [encoded (etf/encode [:send pid message])]
           (go
