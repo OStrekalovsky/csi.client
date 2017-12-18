@@ -2,6 +2,10 @@
   (:require [csi.etf.decode :as decode]
     [clojure.set :as set]))
 
+(def MAX-32BYTE-INTEGER 2147483647)
+
+(def MIN-32BYTE-INTEGER 2147483648)
+
 (def tags
   (set/map-invert decode/tags))
 
@@ -44,6 +48,36 @@
 (defn write-int32 [stream value]
   (write-datum stream "setInt32" 4 value))
 
+(defn- write-big [stream len value]
+  (loop [
+         stream stream
+         value value
+         len len
+         ]
+    (if (zero? len)
+      stream
+      (recur
+        (write-uint8 stream (mod value 256))
+        (quot value 256)
+        (dec len)
+        )
+      )
+    )
+  )
+
+(defn write-small-big [stream value]
+  (let [
+        len 7
+        sign (if (pos? value) 0 1)
+        ]
+    (-> stream
+        (write-uint8 len)
+        (write-uint8 sign)
+        (write-big len value)
+        )
+    )
+  )
+
 (defn write-float64 [stream value]
   (write-datum stream "setFloat64" 8 value))
 
@@ -58,6 +92,13 @@
   (-> stream
     (write-uint8 (tags :integer))
     (write-int32 value)))
+
+(defn encode-small-big [stream value]
+  (-> stream
+      (write-uint8 (tags :small-big))
+      (write-small-big value)
+      )
+  )
 
 (defn encode-float [stream value]
   (-> stream
@@ -116,8 +157,11 @@
     (and (integer? term) (>= term 0) (< term 255))
       (encode-small-integer stream term)
 
-    (integer? term)
+    (and (integer? term) (>= term MIN-32BYTE-INTEGER) (<= term MAX-32BYTE-INTEGER))
       (encode-integer stream term)
+
+    (integer? term)
+      (encode-small-big stream term)
 
     (number? term)
       (encode-float stream term)
