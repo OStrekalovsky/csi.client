@@ -4,7 +4,7 @@
 
 (def MAX-32BYTE-INTEGER 2147483647)
 
-(def MIN-32BYTE-INTEGER 2147483648)
+(def MIN-32BYTE-INTEGER -2147483648)
 
 (def tags
   (set/map-invert decode/tags))
